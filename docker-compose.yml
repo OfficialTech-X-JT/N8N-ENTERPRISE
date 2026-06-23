@@ -1,13 +1,17 @@
 version: "3.8"
 
 # =============================================================================
-# n8n Self-Hosted — Production Docker Compose
-# With Enterprise Feature Unlock
+# n8n Self-Hosted — Universal Docker Compose
+# Works on: Hostinger, DigitalOcean, Vultr, Linode, Hetzner, AWS, Oracle, GCP
 # =============================================================================
-# Prerequisites:
-#   1. Run scripts/patch_license.sh to generate license_patched.js
-#   2. Set up Supabase PostgreSQL (Session Pooler endpoint for IPv4)
-#   3. Configure DuckDNS/Nginx for HTTPS
+#
+# SETUP:
+#   1. Copy this file to your VPS
+#   2. Fill in all YOUR_* placeholders below
+#   3. Run: bash patch_license.sh (from N8N-ENTERPRISE/scripts/)
+#   4. Run: docker-compose up -d
+#   5. Run: bash dismiss_banner.sh <url> <email> <password>
+#
 # =============================================================================
 
 services:
@@ -18,55 +22,107 @@ services:
     ports:
       - "5678:5678"
     environment:
-      # --- Core Settings ---
-      - N8N_HOST=your-domain.duckdns.org
+
+      # ── Core Settings ──────────────────────────────────────────────────────
+      - N8N_HOST=YOUR_DOMAIN_OR_IP
+        # Examples: my-n8n.example.com | sub.duckdns.org | 203.0.113.1
       - N8N_PORT=5678
       - N8N_PROTOCOL=https
-      - WEBHOOK_URL=https://your-domain.duckdns.org/
+        # Change to 'http' if not using SSL
+      - WEBHOOK_URL=https://YOUR_DOMAIN_OR_IP/
       - NODE_ENV=production
 
-      # --- Database (Supabase Session Pooler — IPv4 compatible) ---
-      - DB_TYPE=postgresdb
-      - DB_POSTGRESDB_HOST=aws-1-ap-southeast-1.pooler.supabase.com
-      - DB_POSTGRESDB_PORT=5432
-      - DB_POSTGRESDB_DATABASE=postgres
-      - DB_POSTGRESDB_USER=postgres.YOUR_PROJECT_REF
-      - DB_POSTGRESDB_PASSWORD=YOUR_DB_PASSWORD
-      # IMPORTANT: Do NOT set DB_POSTGRESDB_SCHEMA if you want to use existing
-      # workflows in the public schema. Setting it to 'n8n' creates a separate schema.
+      # ── Encryption (REQUIRED — generate a random 32+ char string) ──────────
+      - N8N_ENCRYPTION_KEY=CHANGE_THIS_TO_A_RANDOM_32_CHAR_STRING
+        # Generate one: openssl rand -hex 32
 
-      # --- Encryption ---
-      - N8N_ENCRYPTION_KEY=your-random-32-char-encryption-key
+      # ── Database ────────────────────────────────────────────────────────────
+      # OPTION A: SQLite (default — no extra setup needed)
+      # Leave DB_TYPE unset or commented out to use SQLite.
+      # SQLite is fine for personal use.
 
-      # --- License (keep defaults, patches handle the rest) ---
-      - N8N_LICENSE_TENANT_ID=1
-      - N8N_LICENSE_AUTO_RENEW_ENABLED=false
+      # OPTION B: PostgreSQL (recommended for production)
+      # Uncomment and fill if using PostgreSQL:
+      # - DB_TYPE=postgresdb
+      # - DB_POSTGRESDB_HOST=YOUR_POSTGRES_HOST
+      #   # Local: localhost | Supabase pooler: aws-0-region.pooler.supabase.com
+      # - DB_POSTGRESDB_PORT=5432
+      # - DB_POSTGRESDB_DATABASE=postgres
+      # - DB_POSTGRESDB_USER=YOUR_DB_USER
+      # - DB_POSTGRESDB_PASSWORD=YOUR_DB_PASSWORD
+      # NOTE: Do NOT set DB_POSTGRESDB_SCHEMA unless you know what you're doing.
+      # Leaving it unset uses 'public' schema (correct for most setups).
 
-      # --- Features (community) ---
+      # OPTION C: MySQL/MariaDB
+      # - DB_TYPE=mysqldb
+      # - DB_MYSQLDB_HOST=YOUR_MYSQL_HOST
+      # - DB_MYSQLDB_PORT=3306
+      # - DB_MYSQLDB_DATABASE=n8n
+      # - DB_MYSQLDB_USER=YOUR_MYSQL_USER
+      # - DB_MYSQLDB_PASSWORD=YOUR_MYSQL_PASSWORD
+
+      # ── Email (optional — for inviting users, password reset) ───────────────
+      # - N8N_EMAIL_MODE=smtp
+      # - N8N_SMTP_HOST=smtp.gmail.com
+      # - N8N_SMTP_PORT=587
+      # - N8N_SMTP_USER=your@gmail.com
+      # - N8N_SMTP_PASS=your_app_password
+      # - N8N_SMTP_SENDER=your@gmail.com
+
+      # ── Community & Features ────────────────────────────────────────────────
       - N8N_COMMUNITY_PACKAGES_ENABLED=true
       - N8N_WORKFLOW_HISTORY_PRUNING_ENABLED=false
 
-      # --- UI ---
+      # ── UI Preferences ──────────────────────────────────────────────────────
       - N8N_HIRING_BANNER_ENABLED=false
       - N8N_DIAGNOSTICS_ENABLED=false
       - N8N_VERSION_NOTIFICATIONS_ENABLED=true
 
-      # --- Task Runners ---
-      # Note: N8N_RUNNERS_ENABLED is deprecated in 2.26.9, remove if getting warnings
-
     volumes:
-      # Persistent data
+      # Persistent n8n data (workflows, credentials, settings)
       - ./n8n-data/.n8n:/home/node/.n8n
 
-      # ===== ENTERPRISE UNLOCK =====
-      # Mount patched license.js that bypasses all enterprise feature checks
-      # Generate with: bash scripts/patch_license.sh
+      # ╔══════════════════════════════════════════════════════════════════╗
+      # ║              ENTERPRISE UNLOCK — REQUIRED                       ║
+      # ║  Generate license_patched.js first:                             ║
+      # ║    bash N8N-ENTERPRISE/scripts/patch_license.sh n8n .           ║
+      # ╚══════════════════════════════════════════════════════════════════╝
       - ./license_patched.js:/usr/local/lib/node_modules/n8n/dist/license.js:ro
-      # ==============================
 
     user: "0:0"
 
 # =============================================================================
-# AFTER FIRST START — Dismiss the production banner:
-#   bash scripts/dismiss_banner.sh https://your-domain.com admin@email.com Password
+# AFTER STARTING — dismiss the production warning banner (one-time):
+#
+#   bash N8N-ENTERPRISE/scripts/dismiss_banner.sh \
+#     https://YOUR_DOMAIN_OR_IP \
+#     your@email.com \
+#     YourPassword
+#
+# =============================================================================
+#
+# NGINX REVERSE PROXY (recommended) — /etc/nginx/sites-available/n8n:
+#
+#   server {
+#     listen 80;
+#     server_name YOUR_DOMAIN;
+#     return 301 https://$host$request_uri;
+#   }
+#   server {
+#     listen 443 ssl;
+#     server_name YOUR_DOMAIN;
+#     ssl_certificate /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
+#     ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
+#     location / {
+#       proxy_pass http://localhost:5678;
+#       proxy_http_version 1.1;
+#       proxy_set_header Upgrade $http_upgrade;
+#       proxy_set_header Connection 'upgrade';
+#       proxy_set_header Host $host;
+#       proxy_set_header X-Real-IP $remote_addr;
+#       proxy_cache_bypass $http_upgrade;
+#     }
+#   }
+#
+# Get SSL cert: certbot --nginx -d YOUR_DOMAIN
 # =============================================================================
