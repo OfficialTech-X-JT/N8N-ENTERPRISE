@@ -1,0 +1,72 @@
+version: "3.8"
+
+# =============================================================================
+# n8n Self-Hosted — Production Docker Compose
+# With Enterprise Feature Unlock
+# =============================================================================
+# Prerequisites:
+#   1. Run scripts/patch_license.sh to generate license_patched.js
+#   2. Set up Supabase PostgreSQL (Session Pooler endpoint for IPv4)
+#   3. Configure DuckDNS/Nginx for HTTPS
+# =============================================================================
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      # --- Core Settings ---
+      - N8N_HOST=your-domain.duckdns.org
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://your-domain.duckdns.org/
+      - NODE_ENV=production
+
+      # --- Database (Supabase Session Pooler — IPv4 compatible) ---
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=aws-1-ap-southeast-1.pooler.supabase.com
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=postgres
+      - DB_POSTGRESDB_USER=postgres.YOUR_PROJECT_REF
+      - DB_POSTGRESDB_PASSWORD=YOUR_DB_PASSWORD
+      # IMPORTANT: Do NOT set DB_POSTGRESDB_SCHEMA if you want to use existing
+      # workflows in the public schema. Setting it to 'n8n' creates a separate schema.
+
+      # --- Encryption ---
+      - N8N_ENCRYPTION_KEY=your-random-32-char-encryption-key
+
+      # --- License (keep defaults, patches handle the rest) ---
+      - N8N_LICENSE_TENANT_ID=1
+      - N8N_LICENSE_AUTO_RENEW_ENABLED=false
+
+      # --- Features (community) ---
+      - N8N_COMMUNITY_PACKAGES_ENABLED=true
+      - N8N_WORKFLOW_HISTORY_PRUNING_ENABLED=false
+
+      # --- UI ---
+      - N8N_HIRING_BANNER_ENABLED=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_VERSION_NOTIFICATIONS_ENABLED=true
+
+      # --- Task Runners ---
+      # Note: N8N_RUNNERS_ENABLED is deprecated in 2.26.9, remove if getting warnings
+
+    volumes:
+      # Persistent data
+      - ./n8n-data/.n8n:/home/node/.n8n
+
+      # ===== ENTERPRISE UNLOCK =====
+      # Mount patched license.js that bypasses all enterprise feature checks
+      # Generate with: bash scripts/patch_license.sh
+      - ./license_patched.js:/usr/local/lib/node_modules/n8n/dist/license.js:ro
+      # ==============================
+
+    user: "0:0"
+
+# =============================================================================
+# AFTER FIRST START — Dismiss the production banner:
+#   bash scripts/dismiss_banner.sh https://your-domain.com admin@email.com Password
+# =============================================================================
