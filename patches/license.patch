@@ -1,0 +1,21 @@
+--- a/license.js
++++ b/license_patched.js
+@@ -226,12 +226,12 @@ let License = class License {
+     //
+     // CORE LICENSE CHECK — patched to always return true
+     //
+-    isLicensed(feature) {
+-        return this.manager?.hasFeatureEnabled(feature) ?? false;
+-    }
++    isLicensed(feature) {
++        if (feature === "feat:showNonProdBanner") return false; return true; // PATCHED
++    }
+     isCertValid() {
+-        return this.manager?.isValid(false) ?? false;
++        return true; // PATCHED
+     }
+@@ -350,7 +350,7 @@ let License = class License {
+     getPlanName() {
+-        return this.getValue('planName') ?? 'Community';
++        return 'Enterprise'; // PATCHED
+     }
