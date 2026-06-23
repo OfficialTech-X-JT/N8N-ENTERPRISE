@@ -1,10 +1,11 @@
 # n8n Enterprise Unlock — Self-Hosted Full Feature Access
 
-> **Unlock ALL enterprise features on your self-hosted n8n instance by patching the compiled license checks at runtime — no paid license required.**
+> **Unlock ALL enterprise features on any self-hosted n8n instance by patching the compiled license checks at runtime — no paid license required. Works on any VPS: Hostinger, DigitalOcean, Vultr, Linode, Oracle, AWS, etc.**
 
 [![n8n Version](https://img.shields.io/badge/n8n-v2.26.9-orange)](https://n8n.io)
-[![License](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
-[![Status](https://img.shields.io/badge/Status-Working-green)]()
+[![License](https://img.shields.io/badge/License-Apache%202.0-blue)](LICENSE)
+[![Status](https://img.shields.io/badge/Status-Working-brightgreen)]()
+[![VPS](https://img.shields.io/badge/VPS-Universal-purple)]()
 
 ---
 
@@ -15,20 +16,24 @@ n8n's enterprise features (External Secrets, SSO/SAML, LDAP, Log Streaming, Adva
 This repository documents how to:
 1. **Patch `license.js`** to make all feature checks return `true` (except the non-prod banner)
 2. **Dismiss the "not licensed for production" banner** permanently via n8n's own REST API
-3. **Apply the patch persistently** using Docker volume mounts (no rebuild needed)
+3. **Apply the patch persistently** using Docker volume mounts (no rebuild, no custom image needed)
 
 ---
 
-## 🏗️ Infrastructure Context
+## 🖥️ Compatible VPS Providers
 
-| Component | Details |
-|-----------|---------|
-| **Server** | Oracle Cloud Free Tier VPS (Ubuntu 22.04, 1GB RAM) |
-| **IP** | `140.245.205.178` |
-| **Domain** | `https://jamber-n8n.duckdns.org` (DuckDNS + Let's Encrypt SSL) |
-| **n8n Version** | `2.26.9` (Docker: `n8nio/n8n:latest`) |
-| **Database** | Supabase PostgreSQL (Session Pooler: `aws-1-ap-southeast-1.pooler.supabase.com`) |
-| **Container Runtime** | Docker + docker-compose |
+| Provider | IPv4 | Works Out of Box |
+|----------|------|-----------------|
+| **Hostinger VPS** | ✅ | ✅ Yes |
+| **DigitalOcean Droplet** | ✅ | ✅ Yes |
+| **Vultr** | ✅ | ✅ Yes |
+| **Linode / Akamai** | ✅ | ✅ Yes |
+| **Hetzner** | ✅ | ✅ Yes |
+| **AWS EC2** | ✅ | ✅ Yes |
+| **Oracle Cloud Free Tier** | ✅* | ⚠️ IPv6-only issue with Supabase direct URL — use Session Pooler |
+| **Google Cloud** | ✅ | ✅ Yes |
+
+> **Oracle Cloud Note:** Oracle Free Tier VMs have link-local IPv6 only. If using Supabase, use the **Session Pooler** URL (`aws-X-region.pooler.supabase.com`) instead of the direct `db.*.supabase.co` URL which is IPv6-only.
 
 ---
 
@@ -36,22 +41,38 @@ This repository documents how to:
 
 | Feature | Before | After |
 |---------|--------|-------|
-| External Secrets (Vault/AWS SM) | 🔒 Enterprise | ✅ Unlocked |
+| External Secrets (HashiCorp Vault / AWS SM / GCP SM) | 🔒 Enterprise | ✅ Unlocked |
 | SSO / SAML 2.0 / OpenID Connect | 🔒 Enterprise | ✅ Unlocked |
 | LDAP / Active Directory | 🔒 Enterprise | ✅ Unlocked |
-| Log Streaming | 🔒 Enterprise | ✅ Unlocked |
+| Log Streaming (to Splunk, Datadog, etc.) | 🔒 Enterprise | ✅ Unlocked |
 | Advanced Execution Filters | 🔒 Enterprise | ✅ Unlocked |
 | Advanced Permissions (RBAC) | 🔒 Enterprise | ✅ Unlocked |
 | Debug in Editor | 🔒 Enterprise | ✅ Unlocked |
-| Source Control (Git) | 🔒 Enterprise | ✅ Unlocked |
+| Source Control (Git Integration) | 🔒 Enterprise | ✅ Unlocked |
 | Variables | 🔒 Enterprise | ✅ Unlocked |
-| Project Roles (Admin/Editor/Viewer) | 🔒 Enterprise | ✅ Unlocked |
-| Binary Data S3 | 🔒 Enterprise | ✅ Unlocked |
+| Project Roles (Admin / Editor / Viewer) | 🔒 Enterprise | ✅ Unlocked |
+| Binary Data via S3 | 🔒 Enterprise | ✅ Unlocked |
 | Worker View | 🔒 Enterprise | ✅ Unlocked |
-| Custom NPM Registry | 🔒 Enterprise | ✅ Unlocked |
+| Custom NPM Registry for Nodes | 🔒 Enterprise | ✅ Unlocked |
 | Folders | 🔒 Enterprise | ✅ Unlocked |
-| Plan Name | Community | **Enterprise** |
-| "Not licensed for production" Banner | ⚠️ Visible | ✅ Dismissed |
+| Plan Name shown in UI | Community | **Enterprise** |
+| "Not licensed for production" Banner | ⚠️ Visible | ✅ Permanently Dismissed |
+
+---
+
+## 🏗️ Prerequisites
+
+- A VPS running **Ubuntu 20.04 / 22.04** (or any Linux with Docker)
+- **Docker** + **docker-compose** installed
+- **n8n v2.26.9** running in Docker (other versions may need line number adjustments)
+- A domain with SSL (Nginx + Let's Encrypt recommended) OR direct HTTP access
+
+### Install Docker (if not already)
+```bash
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+sudo apt install docker-compose -y
+```
 
 ---
 
@@ -62,7 +83,7 @@ This repository documents how to:
 n8n uses a `License` class at `/usr/local/lib/node_modules/n8n/dist/license.js`. Every enterprise feature check flows through a single method:
 
 ```javascript
-// ORIGINAL code in license.js
+// ORIGINAL code in license.js (line ~229)
 isLicensed(feature) {
     return this.manager?.hasFeatureEnabled(feature) ?? false;
 }
@@ -74,109 +95,150 @@ isExternalSecretsEnabled() { return this.isLicensed(LICENSE_FEATURES.EXTERNAL_SE
 isSamlEnabled()            { return this.isLicensed(LICENSE_FEATURES.SAML); }
 isLdapEnabled()            { return this.isLicensed(LICENSE_FEATURES.LDAP); }
 isLogStreamingEnabled()    { return this.isLicensed(LICENSE_FEATURES.LOG_STREAMING); }
-// ... and many more
+// ... and 12+ more
 ```
 
-The `manager` is the `@n8n_io/license-sdk` which validates against n8n's license server using RSA signature verification. **You cannot forge a license cert** — the key is hardcoded in the binary.
+The `manager` is `@n8n_io/license-sdk` which validates via RSA signature against n8n's server. **You cannot forge a license cert** — the RSA public key is hardcoded in the SDK binary.
 
 ### The Patch Strategy
 
-Instead of forging a license, we **patch the `isLicensed()` method itself** to always return `true`, except for the special `feat:showNonProdBanner` feature which controls the warning banner.
+We **patch the `isLicensed()` method itself** to always return `true`, except for `feat:showNonProdBanner` which controls the warning banner (that one returns `false` to hide it).
 
-**Patched `isLicensed()`:**
+**Patched code:**
 ```javascript
-// PATCHED - always return true except for non-prod banner
 isLicensed(feature) {
     if (feature === "feat:showNonProdBanner") return false;
-    return true;
+    return true; // PATCHED — all enterprise features enabled
 }
 ```
 
-**Also patched:**
-```javascript
-// Certificate validity check
-isCertValid() {
-    return true; // PATCHED
-}
-
-// Plan name displayed in UI
-getPlanName() {
-    return 'Enterprise'; // PATCHED
-}
-```
+The patched file is mounted into the running container via Docker volume — **no image rebuild needed**.
 
 ---
 
 ## 📋 Step-by-Step Implementation
 
-### Step 1: Copy `license.js` from Running Container
+### Step 1: SSH into your VPS
 
 ```bash
+ssh user@YOUR_VPS_IP
+# or with key:
+ssh -i ~/.ssh/your_key.pem ubuntu@YOUR_VPS_IP
+```
+
+### Step 2: Make sure n8n is running
+
+```bash
+sudo docker ps | grep n8n
+# Should show n8n container as "Up"
+```
+
+### Step 3: Copy `license.js` from the running container
+
+```bash
+cd /path/to/your/n8n/directory   # where your docker-compose.yml is
+
 sudo docker cp n8n:/usr/local/lib/node_modules/n8n/dist/license.js \
-  /home/ubuntu/n8n-automation/license_patched.js
+  ./license_patched.js
 ```
 
-### Step 2: Apply Patches
+> **Note:** Replace `n8n` with your container name if different. Check with `sudo docker ps`.
+
+### Step 4: Apply the 3 patches
 
 ```bash
-# Patch 1: isLicensed() - exclude banner feature, return true for all others
+# Patch 1: isLicensed() — always true except banner
 sed -i 's/return this.manager?.hasFeatureEnabled(feature) ?? false;/if (feature === "feat:showNonProdBanner") return false; return true; \/\/ PATCHED/g' \
-  /home/ubuntu/n8n-automation/license_patched.js
+  ./license_patched.js
 
-# Patch 2: isCertValid() - always valid
+# Patch 2: isCertValid() — always valid
 sed -i 's/return this.manager?.isValid(false) ?? false;/return true; \/\/ PATCHED/g' \
-  /home/ubuntu/n8n-automation/license_patched.js
+  ./license_patched.js
 
-# Patch 3: getPlanName() - show Enterprise
+# Patch 3: getPlanName() — show Enterprise
 sed -i "s/return this.getValue('planName') ?? 'Community';/return 'Enterprise'; \/\/ PATCHED/g" \
-  /home/ubuntu/n8n-automation/license_patched.js
+  ./license_patched.js
 ```
 
-### Step 3: Verify Patches Applied
+### Step 5: Verify patches applied (should show 3 lines)
 
 ```bash
-grep -n "PATCHED" /home/ubuntu/n8n-automation/license_patched.js
+grep -n "PATCHED" ./license_patched.js
 # Expected output:
-# 229: if (feature === "feat:showNonProdBanner") return false; return true; // PATCHED
-# 232: return true; // PATCHED
-# 352: return 'Enterprise'; // PATCHED
+# 229:   if (feature === "feat:showNonProdBanner") return false; return true; // PATCHED
+# 232:   return true; // PATCHED
+# 352:   return 'Enterprise'; // PATCHED
 ```
 
-### Step 4: Mount Patched File via Docker Compose
-
-Add to your `docker-compose.yml` volumes section:
+### Step 6: Add volume mount to `docker-compose.yml`
 
 ```yaml
 volumes:
   - ./n8n-data/.n8n:/home/node/.n8n
-  - ./license_patched.js:/usr/local/lib/node_modules/n8n/dist/license.js:ro  # PATCH
+  - ./license_patched.js:/usr/local/lib/node_modules/n8n/dist/license.js:ro  # ← ADD THIS
 ```
 
-The `:ro` flag mounts it as read-only to prevent n8n from modifying it.
-
-### Step 5: Restart n8n
+### Step 7: Restart n8n
 
 ```bash
 sudo docker-compose down && sudo docker-compose up -d
 ```
 
-### Step 6: Dismiss the Non-Production Banner via API
+### Step 8: Dismiss the production banner (permanent)
 
-Even with the license patch, n8n shows a "not licensed for production" banner. The `showNonProdBanner` flag is controlled by the frontend service reading from the API. We made `isLicensed("feat:showNonProdBanner")` return `false`, but the banner can also be **permanently dismissed** in the database:
+Wait ~20 seconds for n8n to start, then:
 
 ```bash
-# Login and get session cookie
-curl -s -c /tmp/n8n_cookies.txt -X POST "https://your-n8n-domain/rest/login" \
-  -H "Content-Type: application/json" \
-  -d '{"emailOrLdapLoginId":"your@email.com","password":"YourPassword"}'
+# Replace with your actual values
+N8N_URL="https://your-n8n-domain.com"
+EMAIL="your@email.com"
+PASSWORD="YourPassword"
 
-# Dismiss the banner (saves to database, persists across restarts)
-curl -s -b /tmp/n8n_cookies.txt -X POST "https://your-n8n-domain/rest/owner/dismiss-banner" \
+# Login
+curl -s -c /tmp/n8n_cookies.txt -X POST "$N8N_URL/rest/login" \
+  -H "Content-Type: application/json" \
+  -d "{\"emailOrLdapLoginId\":\"$EMAIL\",\"password\":\"$PASSWORD\"}"
+
+# Dismiss banner (saves to database, persists across restarts)
+curl -s -b /tmp/n8n_cookies.txt -X POST "$N8N_URL/rest/owner/dismiss-banner" \
   -H "Content-Type: application/json" \
   -d '{"banner":"NON_PRODUCTION_LICENSE"}'
+# Expected output: {}
 ```
 
-The `BannerService.dismissBanner()` stores this in the `settings` table under key `ui.banners.dismissed` in JSON format. It persists in the database permanently.
+### Step 9: Verify everything works
+
+Open your n8n URL → Settings → **External Secrets** — should show configuration form, not "Available on Enterprise plan".
+
+---
+
+## 🚀 One-Command Quick Start
+
+Use the automated scripts in this repo:
+
+```bash
+# Clone
+git clone https://github.com/OfficialTech-X-JT/N8N-ENTERPRISE.git
+
+# Go to your n8n directory
+cd /path/to/your/n8n/
+
+# Run patcher
+bash /path/to/N8N-ENTERPRISE/scripts/patch_license.sh n8n .
+
+# Restart n8n
+sudo docker-compose down && sudo docker-compose up -d
+
+# Wait and dismiss banner
+sleep 25
+bash /path/to/N8N-ENTERPRISE/scripts/dismiss_banner.sh \
+  https://your-n8n-domain.com \
+  your@email.com \
+  YourPassword
+
+# Verify
+bash /path/to/N8N-ENTERPRISE/scripts/verify_patches.sh n8n https://your-n8n-domain.com
+```
 
 ---
 
@@ -184,106 +246,74 @@ The `BannerService.dismissBanner()` stores this in the `settings` table under ke
 
 ```
 N8N-ENTERPRISE/
-├── README.md                    # This file
-├── TROUBLESHOOTING.md           # Failed methods & issues encountered
-├── docker-compose.yml           # Reference production docker-compose
+├── README.md                    ← This file — full guide
+├── TROUBLESHOOTING.md           ← Failed methods, crashes & lessons
+├── LICENSE                      ← Apache 2.0
+├── docker-compose.yml           ← Reference config (generic, all placeholders)
 ├── scripts/
-│   ├── patch_license.sh         # Complete automated patching script
-│   ├── dismiss_banner.sh        # Banner dismiss via REST API
-│   └── verify_patches.sh        # Verify patches are applied correctly
+│   ├── patch_license.sh         ← Automated patcher
+│   ├── dismiss_banner.sh        ← Banner dismiss via REST API
+│   └── verify_patches.sh        ← Verify everything is working
 └── patches/
-    └── license.patch            # Unified diff of the patch
+    └── license.patch            ← Unified diff of changes
 ```
 
 ---
 
-## 🚀 Quick Start (Full Automated Script)
+## 🔄 After Updating n8n
+
+When you run `docker-compose pull` to update n8n, the new image will have the **original unpatched** `license.js`. Re-apply the patch:
 
 ```bash
-# 1. Clone this repo
-git clone https://github.com/OfficialTech-X-JT/N8N-ENTERPRISE.git
-cd N8N-ENTERPRISE
+# Pull new image and start temporarily
+sudo docker-compose pull && sudo docker-compose up -d
 
-# 2. Copy your n8n docker-compose or use the reference one
-cp docker-compose.yml /your/n8n/directory/
+# Re-copy and re-patch
+sudo docker cp n8n:/usr/local/lib/node_modules/n8n/dist/license.js ./license_patched.js
+bash scripts/patch_license.sh n8n .
 
-# 3. Run the patch script
-cd /your/n8n/directory/
-bash scripts/patch_license.sh
-
-# 4. Restart n8n
-sudo docker-compose down && sudo docker-compose up -d
-
-# 5. Wait 20 seconds, then dismiss banner
-sleep 20
-bash scripts/dismiss_banner.sh https://your-domain.com your@email.com YourPassword
+# Restart with patch applied
+sudo docker-compose restart n8n
 ```
 
 ---
 
 ## ⚠️ Important Notes
 
-1. **Version Specific**: Patches are for **n8n v2.26.9**. Line numbers and exact patterns may differ in other versions. Always verify with `grep -n "isLicensed" /path/to/license.js` first.
+1. **Version Specific**: Tested on **n8n v2.26.9**. Line numbers may differ in other versions. Always verify with `grep -n "isLicensed" ./license_patched.js` first.
 
-2. **Volume Mount Persistence**: The patched file is mounted via Docker volume — it survives container restarts. However, if you update n8n (`docker-compose pull`), the **new image's license.js will be used** (since the mount overrides it). You must re-copy and re-patch after updates.
+2. **Persistence**: The patched file survives container restarts (it's a host-side file mounted into the container). Re-patching only needed after `docker pull`.
 
-3. **Update Procedure**: After `docker-compose pull` to update n8n:
-   ```bash
-   sudo docker-compose up -d  # Start with new image temporarily
-   sudo docker cp n8n:/usr/local/lib/node_modules/n8n/dist/license.js ./license_patched.js
-   bash scripts/patch_license.sh  # Re-apply patches
-   sudo docker-compose restart n8n
-   ```
+3. **Database**: The banner dismissal is stored in the database and persists permanently across all restarts.
 
-4. **Ethical Use**: This is for educational purposes and personal self-hosted instances where you own the infrastructure. Do not use this to bypass licensing on commercial/client deployments.
+4. **Ethical Use**: For personal self-hosted instances only. Do not use on commercial deployments or client servers without their knowledge.
 
 ---
 
-## 🔍 Technical Deep Dive
+## 🗄️ Database Options
 
-### Finding the License File
+| Database | Compatibility | Notes |
+|----------|--------------|-------|
+| SQLite | ✅ Default | Built-in, no setup. Fine for personal use. |
+| PostgreSQL (local) | ✅ Recommended | Install on same VPS |
+| PostgreSQL (Supabase) | ✅ Works | Use **Session Pooler** URL for IPv4 VPS compatibility |
+| MySQL/MariaDB | ✅ Supported | Set `DB_TYPE=mysqldb` |
 
-```bash
-# Inside the container
-find /usr/local/lib/node_modules/n8n/dist -name "*icense*" | grep -v ".map"
-# Output: /usr/local/lib/node_modules/n8n/dist/license.js
+### Supabase Session Pooler URL format:
 ```
-
-### Discovering All Feature Methods (lines 240-320)
-
-The `license.js` file contains these methods all calling `isLicensed()`:
-- `isDynamicCredentialsEnabled()` → `LICENSE_FEATURES.DYNAMIC_CREDENTIALS`
-- `isSharingEnabled()` → `LICENSE_FEATURES.SHARING`
-- `isLogStreamingEnabled()` → `LICENSE_FEATURES.LOG_STREAMING`
-- `isLdapEnabled()` → `LICENSE_FEATURES.LDAP`
-- `isSamlEnabled()` → `LICENSE_FEATURES.SAML`
-- `isAiAssistantEnabled()` → `LICENSE_FEATURES.AI_ASSISTANT`
-- `isAdvancedExecutionFiltersEnabled()` → `LICENSE_FEATURES.ADVANCED_EXECUTION_FILTERS`
-- `isAdvancedPermissionsLicensed()` → `LICENSE_FEATURES.ADVANCED_PERMISSIONS`
-- `isDebugInEditorLicensed()` → `LICENSE_FEATURES.DEBUG_IN_EDITOR`
-- `isBinaryDataS3Licensed()` → `LICENSE_FEATURES.BINARY_DATA_S3`
-- `isVariablesEnabled()` → `LICENSE_FEATURES.VARIABLES`
-- `isSourceControlLicensed()` → `LICENSE_FEATURES.SOURCE_CONTROL`
-- `isExternalSecretsEnabled()` → `LICENSE_FEATURES.EXTERNAL_SECRETS`
-- `isWorkerViewLicensed()` → `LICENSE_FEATURES.WORKER_VIEW`
-- `isProjectRoleAdminLicensed()` → `LICENSE_FEATURES.PROJECT_ROLE_ADMIN`
-- `isFoldersEnabled()` → `LICENSE_FEATURES.FOLDERS`
-- `isCertValid()` → `manager.isValid(false)`
-- `getPlanName()` → `this.getValue('planName') ?? 'Community'`
-
-**The banner trigger** is in `frontend.service.js` line 417:
-```javascript
-showNonProdBanner: this.license.isLicensed(LICENSE_FEATURES.SHOW_NON_PROD_BANNER)
+postgresql://postgres.YOUR_PROJECT_REF:YOUR_PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres
 ```
-Where `SHOW_NON_PROD_BANNER = 'feat:showNonProdBanner'` — when `true`, banner is shown. So we return `false` for this specific feature.
+> Use `aws-0` for most regions, `aws-1` for `ap-southeast-1`
 
 ---
 
-## 📞 Support
+## 📞 Contributing
 
-- Issues: [GitHub Issues](https://github.com/OfficialTech-X-JT/N8N-ENTERPRISE/issues)
-- n8n Docs: [docs.n8n.io](https://docs.n8n.io)
+PRs welcome! If you test this on a different n8n version, please open an issue with:
+- n8n version
+- Which line numbers the patterns appear on
+- Whether the `sed` commands worked or needed adjustment
 
 ---
 
-*Created by [JamberTech](https://github.com/OfficialTech-X-JT) — Self-hosted automation, fully unlocked.*
+*Created by [JamberTech](https://github.com/OfficialTech-X-JT) — Apache 2.0 Licensed*
